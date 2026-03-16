@@ -54,7 +54,12 @@ class DemoHomePage extends StatefulWidget {
 
 class _DemoHomePageState extends State<DemoHomePage> {
   final TextEditingController _apiKeyController = TextEditingController();
+  final TextEditingController _modelController = TextEditingController();
+  final TextEditingController _customEndpointController =
+      TextEditingController();
   final TextEditingController _promptController = TextEditingController();
+
+  late EndpointPreset _selectedEndpoint;
 
   bool _isLoading = false;
   bool _obscureApiKey = true;
@@ -63,18 +68,48 @@ class _DemoHomePageState extends State<DemoHomePage> {
 
   bool get _hasPrompt => _promptController.text.trim().isNotEmpty;
   bool get _hasApiKey => _apiKeyController.text.trim().isNotEmpty;
-  bool get _canSubmit => !_isLoading && _hasApiKey && _hasPrompt;
+  bool get _hasModel => _modelController.text.trim().isNotEmpty;
+  String get _resolvedBaseUrl => _selectedEndpoint.isCustom
+      ? _customEndpointController.text.trim()
+      : _selectedEndpoint.baseUrl;
+  bool get _hasValidEndpointUrl {
+    final uri = Uri.tryParse(_resolvedBaseUrl);
+    return uri != null &&
+        uri.hasScheme &&
+        (uri.host.isNotEmpty || uri.authority.isNotEmpty);
+  }
+
+  bool get _canSubmit =>
+      !_isLoading &&
+      _hasApiKey &&
+      _hasPrompt &&
+      _hasModel &&
+      _hasValidEndpointUrl;
 
   @override
   void initState() {
     super.initState();
+    _selectedEndpoint = EndpointPreset.fromBaseUrl(widget.config.baseUrl);
+    _modelController.text = widget.config.model;
+    if (_selectedEndpoint.isCustom) {
+      _customEndpointController.text = widget.config.baseUrl;
+    }
+
     _apiKeyController.addListener(_handleInputChanged);
+    _modelController.addListener(_handleInputChanged);
+    _customEndpointController.addListener(_handleInputChanged);
     _promptController.addListener(_handleInputChanged);
   }
 
   @override
   void dispose() {
     _apiKeyController
+      ..removeListener(_handleInputChanged)
+      ..dispose();
+    _modelController
+      ..removeListener(_handleInputChanged)
+      ..dispose();
+    _customEndpointController
       ..removeListener(_handleInputChanged)
       ..dispose();
     _promptController
@@ -85,6 +120,21 @@ class _DemoHomePageState extends State<DemoHomePage> {
 
   void _handleInputChanged() {
     setState(() {});
+  }
+
+  void _updateEndpoint(EndpointPreset? preset) {
+    if (preset == null) {
+      return;
+    }
+
+    setState(() {
+      _selectedEndpoint = preset;
+      if (!preset.isCustom) {
+        _customEndpointController.clear();
+      } else if (_customEndpointController.text.trim().isEmpty) {
+        _customEndpointController.text = widget.config.baseUrl;
+      }
+    });
   }
 
   Future<void> _submitPrompt() async {
@@ -100,6 +150,8 @@ class _DemoHomePageState extends State<DemoHomePage> {
       final response = await widget.aiService.generate(
         prompt: _promptController.text,
         apiKey: _apiKeyController.text,
+        model: _modelController.text,
+        baseUrl: _resolvedBaseUrl,
       );
       if (!mounted) {
         return;
@@ -162,7 +214,7 @@ class _DemoHomePageState extends State<DemoHomePage> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Bring your own API key, send one prompt, and inspect the model response. The model call stays behind a thin service layer so this client can later move to a remote Genkit flow without changing the screen contract.',
+                    'Bring your own key, switch between OpenAI-compatible endpoints, and adjust the model at runtime without rebuilding the app.',
                     style: textTheme.bodyLarge?.copyWith(height: 1.5),
                   ),
                   const SizedBox(height: 20),
@@ -170,11 +222,15 @@ class _DemoHomePageState extends State<DemoHomePage> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      _InfoChip(label: 'Model', value: widget.config.model),
                       _InfoChip(
-                        label: 'Base URL',
-                        value: widget.config.baseUrl,
+                        label: 'Endpoint',
+                        value: _selectedEndpoint.label,
                       ),
+                      _InfoChip(
+                        label: 'Model',
+                        value: _modelController.text.trim(),
+                      ),
+                      _InfoChip(label: 'Base URL', value: _resolvedBaseUrl),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -182,7 +238,7 @@ class _DemoHomePageState extends State<DemoHomePage> {
                     const _StatusPanel(
                       title: 'Browser request path',
                       message:
-                          'This web build sends requests directly from the browser to the configured endpoint. The key you enter is not bundled at build time, but you should still use a user-controlled key and treat this as a BYOK client.',
+                          'This web build sends requests directly from the browser to the selected endpoint. Your key is entered at runtime, but users should still only use keys they control and trust this client.',
                       tone: _PanelTone.warning,
                     ),
                     const SizedBox(height: 16),
@@ -196,12 +252,58 @@ class _DemoHomePageState extends State<DemoHomePage> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Access',
+                            'Connection',
                             style: textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                           const SizedBox(height: 12),
+                          DropdownButtonFormField<EndpointPreset>(
+                            key: const Key('endpointPresetField'),
+                            initialValue: _selectedEndpoint,
+                            decoration: const InputDecoration(
+                              labelText: 'Endpoint preset',
+                            ),
+                            items: [
+                              for (final preset in EndpointPreset.values)
+                                DropdownMenuItem<EndpointPreset>(
+                                  value: preset,
+                                  child: Text(preset.label),
+                                ),
+                            ],
+                            onChanged: _updateEndpoint,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _selectedEndpoint.helperText,
+                            style: textTheme.bodySmall,
+                          ),
+                          if (_selectedEndpoint.isCustom) ...[
+                            const SizedBox(height: 16),
+                            TextField(
+                              key: const Key('customEndpointField'),
+                              controller: _customEndpointController,
+                              keyboardType: TextInputType.url,
+                              decoration: const InputDecoration(
+                                labelText: 'Custom endpoint URL',
+                                hintText:
+                                    'https://your-provider.example.com/v1',
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          TextField(
+                            key: const Key('modelField'),
+                            controller: _modelController,
+                            keyboardType: TextInputType.text,
+                            decoration: const InputDecoration(
+                              labelText: 'Model',
+                              hintText: 'gpt-4o-mini',
+                              helperText:
+                                  'Choose a model name that exists on the selected provider.',
+                            ),
+                          ),
+                          const SizedBox(height: 16),
                           TextField(
                             key: const Key('apiKeyField'),
                             controller: _apiKeyController,
@@ -249,9 +351,9 @@ class _DemoHomePageState extends State<DemoHomePage> {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            _hasApiKey
-                                ? 'Add a prompt to enable Generate.'
-                                : 'Paste an API key first. The button stays disabled until both fields are filled.',
+                            _canSubmit
+                                ? 'Ready to send the prompt.'
+                                : 'Fill in an API key, model, prompt, and a valid endpoint URL.',
                             style: textTheme.bodyMedium,
                           ),
                           const SizedBox(height: 20),
@@ -331,7 +433,7 @@ class _InfoChip extends StatelessWidget {
                 text: '$label: ',
                 style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-              TextSpan(text: value),
+              TextSpan(text: value.isEmpty ? 'Not set' : value),
             ],
           ),
         ),

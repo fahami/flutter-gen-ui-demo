@@ -1,24 +1,27 @@
 import 'package:genkit/genkit.dart';
 import 'package:genkit_openai/genkit_openai.dart';
 
-import 'app_config.dart';
-
 abstract interface class AiService {
-  Future<String> generate({required String prompt, required String apiKey});
+  Future<String> generate({
+    required String prompt,
+    required String apiKey,
+    required String model,
+    required String baseUrl,
+  });
 }
 
 final class GenkitAiService implements AiService {
-  GenkitAiService({required this.config});
-
-  final AppConfig config;
-
   @override
   Future<String> generate({
     required String prompt,
     required String apiKey,
+    required String model,
+    required String baseUrl,
   }) async {
     final trimmedPrompt = prompt.trim();
     final trimmedApiKey = apiKey.trim();
+    final trimmedModel = model.trim();
+    final trimmedBaseUrl = baseUrl.trim();
 
     if (trimmedPrompt.isEmpty) {
       throw const AiServiceException('Enter a prompt before generating text.');
@@ -30,13 +33,28 @@ final class GenkitAiService implements AiService {
       );
     }
 
+    if (trimmedModel.isEmpty) {
+      throw const AiServiceException(
+        'Enter a model name for the selected endpoint.',
+      );
+    }
+
+    final endpointUri = Uri.tryParse(trimmedBaseUrl);
+    if (endpointUri == null ||
+        !endpointUri.hasScheme ||
+        (endpointUri.host.isEmpty && endpointUri.authority.isEmpty)) {
+      throw const AiServiceException(
+        'Enter a valid endpoint URL before generating text.',
+      );
+    }
+
     try {
       final ai = Genkit(
-        plugins: [openAI(apiKey: trimmedApiKey, baseUrl: config.baseUrl)],
+        plugins: [openAI(apiKey: trimmedApiKey, baseUrl: trimmedBaseUrl)],
       );
 
       final response = await ai.generate(
-        model: openAI.model(config.model),
+        model: openAI.model(trimmedModel),
         prompt: trimmedPrompt,
       );
 
@@ -64,19 +82,19 @@ final class GenkitAiService implements AiService {
         lower.contains('invalid api key') ||
         lower.contains('unauthorized') ||
         lower.contains('401')) {
-      return 'Authentication failed. Check the API key you entered and try again.';
+      return 'Authentication failed. Check the API key and selected endpoint.';
     }
 
     if (lower.contains('socketexception') ||
         lower.contains('failed host lookup') ||
         lower.contains('connection refused') ||
         lower.contains('timed out')) {
-      return 'Network error while reaching the model endpoint. Check your connection and OPENAI_BASE_URL.';
+      return 'Network error while reaching the selected endpoint. Check the URL and your connection.';
     }
 
     if ((lower.contains('model') && lower.contains('not found')) ||
         lower.contains('404')) {
-      return 'The configured model or endpoint was not found. Check OPENAI_MODEL and OPENAI_BASE_URL.';
+      return 'The selected model or endpoint was not found. Check the model name for the chosen provider.';
     }
 
     return 'Request failed. $message';
